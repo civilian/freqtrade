@@ -1,9 +1,9 @@
 # IMPORTANT AFTER INSTALATION REMOVE THIS TWO LINES
-!user_data/config.json
-!user_data/strategies
+#!user_data/config.json
+#!user_data/strategies
 # AND UNCOMMENT THIS two lines
-# user_data/*
-# config*.json
+user_data/*
+config*.json
 
 # Freqtrade rules
 *.sqlite

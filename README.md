@@ -1,7 +1,3 @@
-# USE UNDER YOUR OWN RESPONSABILITY I'M NOT RESPONSIBLE IF YOU LOSE MONEY
-
-# AFTER INSTALATION CHECK [.gitignore](.gitignore)
-
 # ![freqtrade](https://raw.githubusercontent.com/freqtrade/freqtrade/develop/docs/assets/freqtrade_poweredby.svg)
 
 [![Freqtrade CI](https://github.com/freqtrade/freqtrade/workflows/Freqtrade%20CI/badge.svg)](https://github.com/freqtrade/freqtrade/actions/)
