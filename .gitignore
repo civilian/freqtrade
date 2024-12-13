@@ -2,7 +2,7 @@
 !user_data/config.json
 !user_data/strategies
 # AND UNCOMMENT THIS ONE
-user_data/*
+# user_data/*
 
 # Freqtrade rules
 config*.json
