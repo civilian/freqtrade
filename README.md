@@ -32,10 +32,11 @@ Please read the [exchange specific notes](docs/exchanges.md) to learn about even
 - [x] [BingX](https://bingx.com/invite/0EM9RX)
 - [x] [Bybit](https://bybit.com/)
 - [x] [Gate.io](https://www.gate.io/ref/6266643)
-- [x] [HTX](https://www.htx.com/) (Former Huobi)
+- [x] [HTX](https://www.htx.com/)
 - [x] [Hyperliquid](https://hyperliquid.xyz/) (A decentralized exchange, or DEX)
 - [x] [Kraken](https://kraken.com/)
-- [x] [OKX](https://okx.com/) (Former OKEX)
+- [x] [OKX](https://okx.com/)
+- [x] [MyOKX](https://okx.com/) (OKX EEA)
 - [ ] [potentially many others](https://github.com/ccxt/ccxt/). _(We cannot guarantee they will work)_
 
 ### Supported Futures Exchanges (experimental)

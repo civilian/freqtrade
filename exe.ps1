@@ -9,7 +9,7 @@ Set-Location -Path "$scriptDir"
 
 # Iniciar Freqtrade con el modo deseado (reemplazar con el comando correspondiente)
 # Por ejemplo, para ejecutar en modo dry-run:
-freqtrade trade --dry-run
+freqtrade trade
 
 # Mantener la ventana abierta después de Control+C
 Write-Host "Presiona cualquier tecla para cerrar la ventana."
