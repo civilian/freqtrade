@@ -1,5 +1,21 @@
 ---
 services:
+  openvpn:
+    image: openvpn/openvpn-as
+    container_name: openvpn-as
+    environment:
+      - OVPN_ADMIN_PASSWORD=civilian  # Set OpenVPN Admin Password
+    ports:
+      - "943:943"  # Web UI for OpenVPN-AS (optional)
+      - "1194:1194/udp"  # OpenVPN Server Port
+    volumes:
+      - ./openvpn-data:/config  # Persistent volume for OpenVPN configuration
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+
   freqtrade:
     image: freqtradeorg/freqtrade:stable
     # image: freqtradeorg/freqtrade:develop
@@ -22,11 +38,14 @@ services:
     container_name: freqtrade
     volumes:
       - "./user_data:/freqtrade/user_data"
+    depends_on:
+      - openvpn
+    network_mode: "service:openvpn"
     # Expose api on port 8080 (localhost only)
     # Please read the https://www.freqtrade.io/en/stable/rest-api/ documentation
     # for more information.
-    ports:
-      - "127.0.0.1:8080:8080"
+#    ports:
+#      - "127.0.0.1:8080:8080"
     # Default command used when running `docker compose up`
     command: >
       trade
