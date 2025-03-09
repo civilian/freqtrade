@@ -98,10 +98,6 @@ freqai_rl = [
   "sb3-contrib",
   "tqdm",
 ]
-hdf5 = [
-  "tables",
-  "blosc",
-]
 develop = [
   "coveralls",
   "isort",
@@ -129,7 +125,7 @@ jupyter = [
   "nbconvert",
 ]
 all = [
-  "freqtrade[plot,hyperopt,freqai,freqai_rl,hdf5,jupyter]",
+  "freqtrade[plot,hyperopt,freqai,freqai_rl,jupyter]",
 ]
 dev = [
   "freqtrade[all,develop]",
@@ -291,8 +287,6 @@ max-complexity = 12
 [tool.ruff.lint.per-file-ignores]
 "freqtrade/freqai/**/*.py" = [
   "S311",  # Standard pseudo-random generators are not suitable for cryptographic purposes
-  "B006",  # Bugbear - mutable default argument
-  "B008",  # bugbear - Do not perform function calls in argument defaults
 ]
 "tests/**/*.py" = [
   "S101",  # allow assert in tests

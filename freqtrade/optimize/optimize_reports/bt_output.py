@@ -163,15 +163,15 @@ def text_table_strategy(strategy_results, stake_currency: str, title: str):
 
     # Align drawdown string on the center two space separator.
     if "max_drawdown_account" in strategy_results[0]:
-        drawdown = [f'{t["max_drawdown_account"] * 100:.2f}' for t in strategy_results]
+        drawdown = [f"{t['max_drawdown_account'] * 100:.2f}" for t in strategy_results]
     else:
         # Support for prior backtest results
-        drawdown = [f'{t["max_drawdown_per"]:.2f}' for t in strategy_results]
+        drawdown = [f"{t['max_drawdown_per']:.2f}" for t in strategy_results]
 
     dd_pad_abs = max([len(t["max_drawdown_abs"]) for t in strategy_results])
     dd_pad_per = max([len(dd) for dd in drawdown])
     drawdown = [
-        f'{t["max_drawdown_abs"]:>{dd_pad_abs}} {stake_currency}  {dd:>{dd_pad_per}}%'
+        f"{t['max_drawdown_abs']:>{dd_pad_abs}} {stake_currency}  {dd:>{dd_pad_per}}%"
         for t, dd in zip(strategy_results, drawdown, strict=False)
     ]
 
@@ -312,10 +312,11 @@ def text_table_add_metrics(strat_results: dict) -> None:
             ("Sortino", f"{strat_results['sortino']:.2f}" if "sortino" in strat_results else "N/A"),
             ("Sharpe", f"{strat_results['sharpe']:.2f}" if "sharpe" in strat_results else "N/A"),
             ("Calmar", f"{strat_results['calmar']:.2f}" if "calmar" in strat_results else "N/A"),
+            ("SQN", f"{strat_results['sqn']:.2f}" if "sqn" in strat_results else "N/A"),
             (
                 "Profit factor",
                 (
-                    f'{strat_results["profit_factor"]:.2f}'
+                    f"{strat_results['profit_factor']:.2f}"
                     if "profit_factor" in strat_results
                     else "N/A"
                 ),

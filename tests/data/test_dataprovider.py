@@ -92,11 +92,11 @@ def test_historic_trades(mocker, default_conf, trades_history_df):
 
 
 def test_historic_ohlcv_dataformat(mocker, default_conf, ohlcv_history):
-    hdf5loadmock = MagicMock(return_value=ohlcv_history)
+    parquetloadmock = MagicMock(return_value=ohlcv_history)
     featherloadmock = MagicMock(return_value=ohlcv_history)
     mocker.patch(
-        "freqtrade.data.history.datahandlers.hdf5datahandler.HDF5DataHandler._ohlcv_load",
-        hdf5loadmock,
+        "freqtrade.data.history.datahandlers.parquetdatahandler.ParquetDataHandler._ohlcv_load",
+        parquetloadmock,
     )
     mocker.patch(
         "freqtrade.data.history.datahandlers.featherdatahandler.FeatherDataHandler._ohlcv_load",
@@ -108,17 +108,17 @@ def test_historic_ohlcv_dataformat(mocker, default_conf, ohlcv_history):
     dp = DataProvider(default_conf, exchange)
     data = dp.historic_ohlcv("UNITTEST/BTC", "5m")
     assert isinstance(data, DataFrame)
-    hdf5loadmock.assert_not_called()
+    parquetloadmock.assert_not_called()
     featherloadmock.assert_called_once()
 
-    # Switching to dataformat hdf5
-    hdf5loadmock.reset_mock()
+    # Switching to dataformat parquet
+    parquetloadmock.reset_mock()
     featherloadmock.reset_mock()
-    default_conf["dataformat_ohlcv"] = "hdf5"
+    default_conf["dataformat_ohlcv"] = "parquet"
     dp = DataProvider(default_conf, exchange)
     data = dp.historic_ohlcv("UNITTEST/BTC", "5m")
     assert isinstance(data, DataFrame)
-    hdf5loadmock.assert_called_once()
+    parquetloadmock.assert_called_once()
     featherloadmock.assert_not_called()
 
 
@@ -408,20 +408,20 @@ def test_get_analyzed_dataframe(mocker, default_conf, ohlcv_history):
 
     # Test backtest mode
     default_conf["runmode"] = RunMode.BACKTEST
-    dp._set_dataframe_max_index(1)
+    dp._set_dataframe_max_index("XRP/BTC", 1)
     dataframe, time = dp.get_analyzed_dataframe("XRP/BTC", timeframe)
 
     assert len(dataframe) == 1
 
-    dp._set_dataframe_max_index(2)
+    dp._set_dataframe_max_index("XRP/BTC", 2)
     dataframe, time = dp.get_analyzed_dataframe("XRP/BTC", timeframe)
     assert len(dataframe) == 2
 
-    dp._set_dataframe_max_index(3)
+    dp._set_dataframe_max_index("XRP/BTC", 3)
     dataframe, time = dp.get_analyzed_dataframe("XRP/BTC", timeframe)
     assert len(dataframe) == 3
 
-    dp._set_dataframe_max_index(500)
+    dp._set_dataframe_max_index("XRP/BTC", 500)
     dataframe, time = dp.get_analyzed_dataframe("XRP/BTC", timeframe)
     assert len(dataframe) == len(ohlcv_history)
 

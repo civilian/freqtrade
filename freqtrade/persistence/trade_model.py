@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from math import isclose
 from typing import Any, ClassVar, Optional, cast
 
@@ -19,6 +19,7 @@ from sqlalchemy import (
     Select,
     String,
     UniqueConstraint,
+    case,
     desc,
     func,
     select,
@@ -191,6 +192,7 @@ class Order(ModelBase):
         return (
             f"Order(id={self.id}, trade={self.ft_trade_id}, order_id={self.order_id}, "
             f"side={self.side}, filled={self.safe_filled}, price={self.safe_price}, "
+            f"amount={self.amount}, "
             f"status={self.status}, date={self.order_date_utc:{DATETIME_PRINT_FORMAT}})"
         )
 
@@ -268,6 +270,7 @@ class Order(ModelBase):
             "order_filled_timestamp": dt_ts_none(self.order_filled_utc),
             "ft_is_entry": self.ft_order_side == entry_side,
             "ft_order_tag": self.ft_order_tag,
+            "cost": self.cost if self.cost else 0,
         }
         if not minified:
             resp.update(
@@ -276,7 +279,6 @@ class Order(ModelBase):
                     "order_id": self.order_id,
                     "status": self.status,
                     "average": round(self.average, 8) if self.average else 0,
-                    "cost": self.cost if self.cost else 0,
                     "filled": self.filled,
                     "is_open": self.ft_is_open,
                     "order_date": (
@@ -391,7 +393,6 @@ class LocalTrade:
     # Copy of trades_open - but indexed by pair
     bt_trades_open_pp: dict[str, list["LocalTrade"]] = defaultdict(list)
     bt_open_open_trade_count: int = 0
-    bt_open_open_trade_count_candle: int = 0
     bt_total_profit: float = 0
     realized_profit: float = 0
 
@@ -463,6 +464,8 @@ class LocalTrade:
     # Used to keep running funding fees - between the last filled order and now
     # Shall not be used for calculations!
     funding_fee_running: float | None = None
+    # v 2 -> correct max_stake_amount calculation for leveraged trades
+    record_version: int = 2
 
     @property
     def stoploss_or_liquidation(self) -> float:
@@ -598,6 +601,13 @@ class LocalTrade:
             o for o in self.orders if o.ft_order_side not in ["stoploss"] and o.ft_is_open
         ]
         return len(open_orders_wo_sl) > 0
+
+    @property
+    def has_open_position(self) -> bool:
+        """
+        True if there is an open position for this trade
+        """
+        return self.amount > 0
 
     @property
     def open_sl_orders(self) -> list[Order]:
@@ -760,7 +770,6 @@ class LocalTrade:
         LocalTrade.bt_trades_open = []
         LocalTrade.bt_trades_open_pp = defaultdict(list)
         LocalTrade.bt_open_open_trade_count = 0
-        LocalTrade.bt_open_open_trade_count_candle = 0
         LocalTrade.bt_total_profit = 0
 
     def adjust_min_max_rates(self, current_price: float, current_price_low: float) -> None:
@@ -1236,7 +1245,7 @@ class LocalTrade:
                 total_stake += self._calc_open_trade_value(tmp_amount, price)
                 max_stake_amount += tmp_amount * price
         self.funding_fees = funding_fees
-        self.max_stake_amount = float(max_stake_amount)
+        self.max_stake_amount = float(max_stake_amount) / (self.leverage or 1.0)
 
         if close_profit:
             self.close_profit = close_profit
@@ -1462,11 +1471,6 @@ class LocalTrade:
         LocalTrade.bt_trades_open.remove(trade)
         LocalTrade.bt_trades_open_pp[trade.pair].remove(trade)
         LocalTrade.bt_open_open_trade_count -= 1
-        if (trade.close_date_utc - trade.open_date_utc) > timedelta(minutes=trade.timeframe):
-            # Only subtract trades that are open for more than 1 candle
-            # To avoid exceeding max_open_trades.
-            # Must be reset at the start of every candle during backesting.
-            LocalTrade.bt_open_open_trade_count_candle -= 1
         LocalTrade.bt_trades.append(trade)
         LocalTrade.bt_total_profit += trade.close_profit_abs
 
@@ -1476,7 +1480,6 @@ class LocalTrade:
             LocalTrade.bt_trades_open.append(trade)
             LocalTrade.bt_trades_open_pp[trade.pair].append(trade)
             LocalTrade.bt_open_open_trade_count += 1
-            LocalTrade.bt_open_open_trade_count_candle += 1
         else:
             LocalTrade.bt_trades.append(trade)
 
@@ -1485,9 +1488,6 @@ class LocalTrade:
         LocalTrade.bt_trades_open.remove(trade)
         LocalTrade.bt_trades_open_pp[trade.pair].remove(trade)
         LocalTrade.bt_open_open_trade_count -= 1
-        # TODO: The below may have odd behavior in case of canceled entries
-        # It might need to be removed so the trade "counts" as open for this candle.
-        LocalTrade.bt_open_open_trade_count_candle -= 1
 
     @staticmethod
     def get_open_trades() -> list[Any]:
@@ -1537,45 +1537,47 @@ class LocalTrade:
         :param json_str: json string to parse
         :return: Trade instance
         """
+        from uuid import uuid4
+
         import rapidjson
 
         data = rapidjson.loads(json_str)
         trade = cls(
             __FROM_JSON=True,
-            id=data["trade_id"],
+            id=data.get("trade_id"),
             pair=data["pair"],
-            base_currency=data["base_currency"],
-            stake_currency=data["quote_currency"],
+            base_currency=data.get("base_currency"),
+            stake_currency=data.get("quote_currency"),
             is_open=data["is_open"],
-            exchange=data["exchange"],
+            exchange=data.get("exchange", "import"),
             amount=data["amount"],
-            amount_requested=data["amount_requested"],
+            amount_requested=data.get("amount_requested", data["amount"]),
             stake_amount=data["stake_amount"],
-            strategy=data["strategy"],
+            strategy=data.get("strategy"),
             enter_tag=data["enter_tag"],
-            timeframe=data["timeframe"],
+            timeframe=data.get("timeframe"),
             fee_open=data["fee_open"],
-            fee_open_cost=data["fee_open_cost"],
-            fee_open_currency=data["fee_open_currency"],
+            fee_open_cost=data.get("fee_open_cost"),
+            fee_open_currency=data.get("fee_open_currency"),
             fee_close=data["fee_close"],
-            fee_close_cost=data["fee_close_cost"],
-            fee_close_currency=data["fee_close_currency"],
+            fee_close_cost=data.get("fee_close_cost"),
+            fee_close_currency=data.get("fee_close_currency"),
             open_date=datetime.fromtimestamp(data["open_timestamp"] // 1000, tz=timezone.utc),
             open_rate=data["open_rate"],
-            open_rate_requested=data["open_rate_requested"],
-            open_trade_value=data["open_trade_value"],
+            open_rate_requested=data.get("open_rate_requested", data["open_rate"]),
+            open_trade_value=data.get("open_trade_value"),
             close_date=(
                 datetime.fromtimestamp(data["close_timestamp"] // 1000, tz=timezone.utc)
                 if data["close_timestamp"]
                 else None
             ),
-            realized_profit=data["realized_profit"],
+            realized_profit=data.get("realized_profit", 0),
             close_rate=data["close_rate"],
-            close_rate_requested=data["close_rate_requested"],
-            close_profit=data["close_profit"],
-            close_profit_abs=data["close_profit_abs"],
+            close_rate_requested=data.get("close_rate_requested", data["close_rate"]),
+            close_profit=data.get("close_profit", data.get("profit_ratio")),
+            close_profit_abs=data.get("close_profit_abs", data.get("profit_abs")),
             exit_reason=data["exit_reason"],
-            exit_order_status=data["exit_order_status"],
+            exit_order_status=data.get("exit_order_status"),
             stop_loss=data["stop_loss_abs"],
             stop_loss_pct=data["stop_loss_ratio"],
             initial_stop_loss=data["initial_stop_loss_abs"],
@@ -1583,11 +1585,11 @@ class LocalTrade:
             min_rate=data["min_rate"],
             max_rate=data["max_rate"],
             leverage=data["leverage"],
-            interest_rate=data["interest_rate"],
-            liquidation_price=data["liquidation_price"],
+            interest_rate=data.get("interest_rate"),
+            liquidation_price=data.get("liquidation_price"),
             is_short=data["is_short"],
-            trading_mode=data["trading_mode"],
-            funding_fees=data["funding_fees"],
+            trading_mode=data.get("trading_mode"),
+            funding_fees=data.get("funding_fees"),
             amount_precision=data.get("amount_precision", None),
             price_precision=data.get("price_precision", None),
             precision_mode=data.get("precision_mode", None),
@@ -1599,23 +1601,25 @@ class LocalTrade:
                 amount=order["amount"],
                 ft_amount=order["amount"],
                 ft_order_side=order["ft_order_side"],
-                ft_pair=order["pair"],
-                ft_is_open=order["is_open"],
-                order_id=order["order_id"],
-                status=order["status"],
-                average=order["average"],
+                ft_pair=order.get("pair", data["pair"]),
+                ft_is_open=order.get("is_open", False),
+                order_id=order.get("order_id", uuid4().hex),
+                status=order.get("status"),
+                average=order.get("average", order.get("safe_price")),
                 cost=order["cost"],
-                filled=order["filled"],
-                order_date=datetime.strptime(order["order_date"], DATETIME_PRINT_FORMAT),
+                filled=order.get("filled", order["amount"]),
+                order_date=datetime.strptime(order["order_date"], DATETIME_PRINT_FORMAT)
+                if order.get("order_date")
+                else None,
                 order_filled_date=(
                     datetime.fromtimestamp(order["order_filled_timestamp"] // 1000, tz=timezone.utc)
                     if order["order_filled_timestamp"]
                     else None
                 ),
-                order_type=order["order_type"],
-                price=order["price"],
-                ft_price=order["price"],
-                remaining=order["remaining"],
+                order_type=order.get("order_type"),
+                price=order.get("price", order.get("safe_price")),
+                ft_price=order.get("price", order.get("safe_price")),
+                remaining=order.get("remaining", 0.0),
                 funding_fee=order.get("funding_fee", None),
                 ft_order_tag=order.get("ft_order_tag", None),
             )
@@ -1749,6 +1753,8 @@ class Trade(ModelBase, LocalTrade):
     funding_fee_running: Mapped[float | None] = mapped_column(  # type: ignore
         Float(), nullable=True, default=None
     )
+
+    record_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)  # type: ignore
 
     def __init__(self, **kwargs):
         from_json = kwargs.pop("__FROM_JSON", None)
@@ -1916,28 +1922,72 @@ class Trade(ModelBase, LocalTrade):
         return total_open_stake_amount or 0
 
     @staticmethod
-    def get_overall_performance(minutes=None) -> list[dict[str, Any]]:
+    def _generic_performance_query(columns: list, filters: list, fallback: str = "") -> Select:
+        """
+        Retrieve a generic select object to calculate performance grouped on `columns`.
+        Returns the following columns:
+        - columns
+        - profit_ratio
+        - profit_sum_abs
+        - count
+        NOTE: Not supported in Backtesting.
+        """
+        columns_coal = [func.coalesce(c, fallback).label(c.name) for c in columns]
+        pair_costs = (
+            select(
+                *columns_coal,
+                func.sum(
+                    (
+                        func.coalesce(Order.filled, Order.amount)
+                        * func.coalesce(Order.average, Order.price, Order.ft_price)
+                    )
+                    / func.coalesce(Trade.leverage, 1)
+                ).label("cost_per_pair"),
+            )
+            .join(Order, Trade.id == Order.ft_trade_id)
+            .filter(
+                *filters,
+                Order.ft_order_side == case((Trade.is_short.is_(True), "sell"), else_="buy"),
+                Order.filled > 0,
+            )
+            .group_by(*columns)
+            .cte("pair_costs")
+        )
+        trades_grouped = (
+            select(
+                *columns_coal,
+                func.sum(Trade.close_profit_abs).label("profit_sum_abs"),
+                func.count(*columns_coal).label("count"),
+            )
+            .filter(*filters)
+            .group_by(*columns_coal)
+            .cte("trades_grouped")
+        )
+        q = (
+            select(
+                *[trades_grouped.c[x.name] for x in columns],
+                (trades_grouped.c.profit_sum_abs / pair_costs.c.cost_per_pair).label(
+                    "profit_ratio"
+                ),
+                trades_grouped.c.profit_sum_abs,
+                trades_grouped.c.count,
+            )
+            .join(pair_costs, *[trades_grouped.c[x.name] == pair_costs.c[x.name] for x in columns])
+            .order_by(desc("profit_sum_abs"))
+        )
+        return q
+
+    @staticmethod
+    def get_overall_performance(start_date: datetime | None = None) -> list[dict[str, Any]]:
         """
         Returns List of dicts containing all Trades, including profit and trade count
         NOTE: Not supported in Backtesting.
         """
         filters: list = [Trade.is_open.is_(False)]
-        if minutes:
-            start_date = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        if start_date:
             filters.append(Trade.close_date >= start_date)
-
-        pair_rates = Trade.session.execute(
-            select(
-                Trade.pair,
-                func.sum(Trade.close_profit).label("profit_sum"),
-                func.sum(Trade.close_profit_abs).label("profit_sum_abs"),
-                func.count(Trade.pair).label("count"),
-            )
-            .filter(*filters)
-            .group_by(Trade.pair)
-            .order_by(desc("profit_sum_abs"))
-        ).all()
-
+        pair_rates_query = Trade._generic_performance_query([Trade.pair], filters)
+        pair_rates = Trade.session.execute(pair_rates_query).all()
         return [
             {
                 "pair": pair,
@@ -1962,17 +2012,8 @@ class Trade(ModelBase, LocalTrade):
         if pair is not None:
             filters.append(Trade.pair == pair)
 
-        enter_tag_perf = Trade.session.execute(
-            select(
-                Trade.enter_tag,
-                func.sum(Trade.close_profit).label("profit_sum"),
-                func.sum(Trade.close_profit_abs).label("profit_sum_abs"),
-                func.count(Trade.pair).label("count"),
-            )
-            .filter(*filters)
-            .group_by(Trade.enter_tag)
-            .order_by(desc("profit_sum_abs"))
-        ).all()
+        pair_rates_query = Trade._generic_performance_query([Trade.enter_tag], filters, "Other")
+        enter_tag_perf = Trade.session.execute(pair_rates_query).all()
 
         return [
             {
@@ -1996,17 +2037,9 @@ class Trade(ModelBase, LocalTrade):
         filters: list = [Trade.is_open.is_(False)]
         if pair is not None:
             filters.append(Trade.pair == pair)
-        sell_tag_perf = Trade.session.execute(
-            select(
-                Trade.exit_reason,
-                func.sum(Trade.close_profit).label("profit_sum"),
-                func.sum(Trade.close_profit_abs).label("profit_sum_abs"),
-                func.count(Trade.pair).label("count"),
-            )
-            .filter(*filters)
-            .group_by(Trade.exit_reason)
-            .order_by(desc("profit_sum_abs"))
-        ).all()
+
+        pair_rates_query = Trade._generic_performance_query([Trade.exit_reason], filters, "Other")
+        sell_tag_perf = Trade.session.execute(pair_rates_query).all()
 
         return [
             {
@@ -2087,13 +2120,9 @@ class Trade(ModelBase, LocalTrade):
         if start_date:
             filters.append(Trade.close_date >= start_date)
 
-        best_pair = Trade.session.execute(
-            select(Trade.pair, func.sum(Trade.close_profit).label("profit_sum"))
-            .filter(*filters)
-            .group_by(Trade.pair)
-            .order_by(desc("profit_sum"))
-        ).first()
-
+        pair_rates_query = Trade._generic_performance_query([Trade.pair], filters)
+        best_pair = Trade.session.execute(pair_rates_query).first()
+        # returns pair, profit_ratio, abs_profit, count
         return best_pair
 
     @staticmethod

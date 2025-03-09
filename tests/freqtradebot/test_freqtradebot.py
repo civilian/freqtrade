@@ -701,9 +701,9 @@ def test_process_trade_creation(
     assert pytest.approx(trade.amount) == 0
     assert pytest.approx(trade.amount_requested) == 60 / ticker_usdt.return_value[ticker_side]
 
-    assert log_has(
-        f'{"Short" if is_short else "Long"} signal found: about create a new trade for ETH/USDT '
-        "with stake_amount: 60.0 ...",
+    assert log_has_re(
+        f"{'Short' if is_short else 'Long'} signal found: about create a new trade for ETH/USDT "
+        r"with stake_amount: 60.0 and price: .*",
         caplog,
     )
     mocker.patch("freqtrade.freqtradebot.FreqtradeBot._check_and_execute_exit")
@@ -1289,14 +1289,14 @@ def test_exit_positions(mocker, default_conf_usdt, limit_order, is_short, caplog
     trades = [trade]
     freqtrade.wallets.update()
     n = freqtrade.exit_positions(trades)
-    assert n == 0
+    assert n == 1
     # Test amount not modified by fee-logic
     assert not log_has_re(r"Applying fee to amount for Trade .*", caplog)
 
     gra = mocker.patch("freqtrade.freqtradebot.FreqtradeBot.get_real_amount", return_value=0.0)
     # test amount modified by fee-logic
     n = freqtrade.exit_positions(trades)
-    assert n == 0
+    assert n == 1
     assert gra.call_count == 0
 
 
@@ -1329,6 +1329,7 @@ def test_exit_positions_exception(mocker, default_conf_usdt, limit_order, caplog
             ft_price=trade.open_rate,
             order_id=order_id,
             ft_is_open=False,
+            filled=11,
         )
     )
     Trade.session.add(trade)
@@ -2053,7 +2054,7 @@ def test_adjust_entry_replace_fail(
     assert len(trades) == 0
     assert len(Order.session.scalars(select(Order)).all()) == 0
     assert fetch_order_mock.call_count == 4
-    assert log_has_re(r"Could not cancel order.*, therefore not replacing\.", caplog)
+    assert log_has_re(r"Could not fully cancel order.*, therefore not replacing\.", caplog)
 
     # Entry adjustment is called
     assert freqtrade.strategy.adjust_entry_price.call_count == 1
@@ -3742,8 +3743,9 @@ def test_trailing_stop_loss_positive(
 
 @pytest.mark.parametrize("is_short", [False, True])
 def test_disable_ignore_roi_if_entry_signal(
-    default_conf_usdt, limit_order, limit_order_open, is_short, fee, mocker
+    default_conf_usdt, limit_order, limit_order_open, is_short, fee, mocker, time_machine
 ) -> None:
+    time_machine.move_to("2025-01-10 08:00:16 +00:00")
     patch_RPCManager(mocker)
     patch_exchange(mocker)
     eside = entry_side(is_short)
@@ -3772,6 +3774,13 @@ def test_disable_ignore_roi_if_entry_signal(
     patch_get_signal(freqtrade, enter_long=not is_short, enter_short=is_short, exit_short=is_short)
     assert freqtrade.handle_trade(trade) is True
 
+    # Test if entry-signal is absent
+    patch_get_signal(freqtrade)
+    # Signal was evaluated already - no action.
+    assert freqtrade.handle_trade(trade) is False
+
+    # Move to after the candle expired
+    time_machine.shift(timedelta(hours=5))
     # Test if entry-signal is absent
     patch_get_signal(freqtrade)
     assert freqtrade.handle_trade(trade) is True
@@ -5957,13 +5966,13 @@ def test_check_and_call_adjust_trade_position(mocker, default_conf_usdt, fee, ca
     freqtrade.strategy.adjust_trade_position = MagicMock(return_value=(10, "aaaa"))
     freqtrade.process_open_trade_positions()
     assert log_has_re(r"Max adjustment entries for .* has been reached\.", caplog)
-    assert freqtrade.strategy.adjust_trade_position.call_count == 1
+    assert freqtrade.strategy.adjust_trade_position.call_count == 4
 
     caplog.clear()
     freqtrade.strategy.adjust_trade_position = MagicMock(return_value=(-0.0005, "partial_exit_c"))
     freqtrade.process_open_trade_positions()
     assert log_has_re(r"LIMIT_SELL has been fulfilled.*", caplog)
-    assert freqtrade.strategy.adjust_trade_position.call_count == 1
+    assert freqtrade.strategy.adjust_trade_position.call_count == 4
     trade = Trade.get_trades(trade_filter=[Trade.id == 5]).first()
     assert trade.orders[-1].ft_order_tag == "partial_exit_c"
     assert trade.is_open
