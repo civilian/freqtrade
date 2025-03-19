@@ -425,6 +425,10 @@ CONF_SCHEMA = {
             "description": "Edge configuration.",
             "$ref": "#/definitions/edge",
         },
+        "log_config": {
+            "description": "Logging configuration.",
+            "$ref": "#/definitions/logging",
+        },
         "freqai": {
             "description": "FreqAI configuration.",
             "$ref": "#/definitions/freqai",
@@ -470,6 +474,12 @@ CONF_SCHEMA = {
                 "topic_id": {
                     "description": "Telegram topic ID - only applicable for group chats",
                     "type": "string",
+                },
+                "authorized_users": {
+                    "description": "Authorized users for the bot.",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": True,
                 },
                 "allow_custom_messages": {
                     "description": "Allow sending custom messages from the Strategy.",
@@ -877,6 +887,28 @@ CONF_SCHEMA = {
             },
             "required": ["process_throttle_secs", "allowed_risk"],
         },
+        "logging": {
+            "type": "object",
+            "properties": {
+                "version": {"type": "number", "const": 1},
+                "formatters": {
+                    "type": "object",
+                    # In theory the below, but can be more flexible
+                    # based on logging.config documentation
+                    # "additionalProperties": {
+                    #     "type": "object",
+                    #     "properties": {
+                    #         "format": {"type": "string"},
+                    #         "datefmt": {"type": "string"},
+                    #     },
+                    #     "required": ["format"],
+                    # },
+                },
+                "handlers": {"type": "object"},
+                "root": {"type": "object"},
+            },
+            "required": ["version", "formatters", "handlers", "root"],
+        },
         "external_message_consumer": {
             "description": "Configuration for external message consumer.",
             "type": "object",
@@ -1026,8 +1058,7 @@ CONF_SCHEMA = {
                         "Number of historical candles to use for computing target (label) "
                         "statistics from prediction data, instead of from the training dataset."
                     ),
-                    "type": "boolean",
-                    "default": False,
+                    "type": "integer",
                 },
                 "data_kitchen_thread_count": {
                     "description": (

@@ -542,6 +542,10 @@
       "description": "Edge configuration.",
       "$ref": "#/definitions/edge"
     },
+    "log_config": {
+      "description": "Logging configuration.",
+      "$ref": "#/definitions/logging"
+    },
     "freqai": {
       "description": "FreqAI configuration.",
       "$ref": "#/definitions/freqai"
@@ -612,6 +616,14 @@
         "topic_id": {
           "description": "Telegram topic ID - only applicable for group chats",
           "type": "string"
+        },
+        "authorized_users": {
+          "description": "Authorized users for the bot.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
         },
         "allow_custom_messages": {
           "description": "Allow sending custom messages from the Strategy.",
@@ -1273,6 +1285,30 @@
         "allowed_risk"
       ]
     },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "formatters": {
+          "type": "object"
+        },
+        "handlers": {
+          "type": "object"
+        },
+        "root": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "version",
+        "formatters",
+        "handlers",
+        "root"
+      ]
+    },
     "external_message_consumer": {
       "description": "Configuration for external message consumer.",
       "type": "object",
@@ -1417,8 +1453,7 @@
         },
         "fit_live_predictions_candles": {
           "description": "Number of historical candles to use for computing target (label) statistics from prediction data, instead of from the training dataset.",
-          "type": "boolean",
-          "default": false
+          "type": "integer"
         },
         "data_kitchen_thread_count": {
           "description": "Designate the number of threads you want to use for data processing (outlier methods, normalization, etc.).",
