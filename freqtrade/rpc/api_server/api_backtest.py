@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.exceptions import HTTPException
 
+from freqtrade.configuration import remove_exchange_credentials
 from freqtrade.configuration.config_validation import validate_config_consistency
 from freqtrade.constants import Config
 from freqtrade.data.btanalysis import (
@@ -20,7 +21,6 @@ from freqtrade.data.btanalysis import (
 )
 from freqtrade.enums import BacktestState
 from freqtrade.exceptions import ConfigurationError, DependencyException, OperationalException
-from freqtrade.exchange.common import remove_exchange_credentials
 from freqtrade.ft_types import get_BacktestResultType_default
 from freqtrade.misc import deep_merge_dicts, is_file_in_dir
 from freqtrade.rpc.api_server.api_schemas import (
@@ -62,9 +62,8 @@ def __run_backtest_bg(btconfig: Config):
             from freqtrade.optimize.backtesting import Backtesting
 
             ApiBG.bt["bt"] = Backtesting(btconfig)
-            ApiBG.bt["bt"].load_bt_data_detail()
         else:
-            ApiBG.bt["bt"].config = btconfig
+            ApiBG.bt["bt"].config = deep_merge_dicts(btconfig, ApiBG.bt["bt"].config)
             ApiBG.bt["bt"].init_backtest()
         # Only reload data if timeframe changed.
         if (
@@ -96,7 +95,10 @@ def __run_backtest_bg(btconfig: Config):
             )
 
             ApiBG.bt["bt"].results = generate_backtest_stats(
-                ApiBG.bt["data"], ApiBG.bt["bt"].all_results, min_date=min_date, max_date=max_date
+                ApiBG.bt["data"],
+                ApiBG.bt["bt"].all_bt_content,
+                min_date=min_date,
+                max_date=max_date,
             )
 
             if btconfig.get("export", "none") == "trades":
@@ -108,10 +110,13 @@ def __run_backtest_bg(btconfig: Config):
                     ApiBG.bt["bt"].results,
                     datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
                     market_change_data=combined_res,
+                    strategy_files={
+                        s.get_strategy_name(): s.__file__ for s in ApiBG.bt["bt"].strategylist
+                    },
                 )
                 ApiBG.bt["bt"].results["metadata"][strategy_name]["filename"] = str(fn.stem)
                 ApiBG.bt["bt"].results["metadata"][strategy_name]["strategy"] = strategy_name
-
+        ApiBG.bt["bt"].reset_backtest()
         logger.info("Backtest finished.")
 
     except ConfigurationError as e:

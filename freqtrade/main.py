@@ -10,15 +10,20 @@ from typing import Any
 
 
 # check min. python version
-if sys.version_info < (3, 10):  # pragma: no cover  # noqa: UP036
-    sys.exit("Freqtrade requires Python version >= 3.10")
+if sys.version_info < (3, 11):  # pragma: no cover  # noqa: UP036
+    sys.exit("Freqtrade requires Python version >= 3.11")
 
 from freqtrade import __version__
 from freqtrade.commands import Arguments
 from freqtrade.constants import DOCS_LINK
 from freqtrade.exceptions import ConfigurationError, FreqtradeException, OperationalException
 from freqtrade.loggers import setup_logging_pre
-from freqtrade.system import asyncio_setup, gc_set_threshold, print_version_info
+from freqtrade.system import (
+    asyncio_setup,
+    gc_set_threshold,
+    print_version_info,
+    set_mp_start_method,
+)
 
 
 logger = logging.getLogger("freqtrade")
@@ -44,6 +49,7 @@ def main(sysargv: list[str] | None = None) -> None:
         elif "func" in args:
             logger.info(f"freqtrade {__version__}")
             gc_set_threshold()
+            set_mp_start_method()
             return_code = args["func"](args)
         else:
             # No subcommand was issued.

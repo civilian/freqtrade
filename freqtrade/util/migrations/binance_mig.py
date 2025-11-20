@@ -6,19 +6,26 @@ from sqlalchemy import select
 from freqtrade.constants import DOCS_LINK, Config
 from freqtrade.enums import TradingMode
 from freqtrade.exceptions import OperationalException
+from freqtrade.persistence import KeyValueStore, Trade
 from freqtrade.persistence.pairlock import PairLock
-from freqtrade.persistence.trade_model import Trade
 
 
 logger = logging.getLogger(__name__)
 
 
 def migrate_binance_futures_names(config: Config):
+    """
+    Migrate binance futures names in both database and data files.
+    This is needed because ccxt naming changed from "BTC/USDT" to "BTC/USDT:USDT"
+    """
     if not (
         config.get("trading_mode", TradingMode.SPOT) == TradingMode.FUTURES
         and config["exchange"]["name"] == "binance"
     ):
         # only act on new futures
+        return
+    if KeyValueStore.get_int_value("binance_migration"):
+        # already migrated
         return
     import ccxt
 
@@ -29,10 +36,11 @@ def migrate_binance_futures_names(config: Config):
         )
     _migrate_binance_futures_db(config)
     migrate_binance_futures_data(config)
+    KeyValueStore.store_value("binance_migration", 1)
 
 
 def _migrate_binance_futures_db(config: Config):
-    logger.warning("Migrating binance futures pairs in database.")
+    logger.info("Migrating binance futures pairs in database.")
     trades = Trade.get_trades([Trade.exchange == "binance", Trade.trading_mode == "FUTURES"]).all()
     for trade in trades:
         if ":" in trade.pair:
@@ -52,7 +60,7 @@ def _migrate_binance_futures_db(config: Config):
     # print(pls)
     # pls.update({'pair': concat(PairLock.pair,':USDT')})
     Trade.commit()
-    logger.warning("Done migrating binance futures pairs in database.")
+    logger.info("Done migrating binance futures pairs in database.")
 
 
 def migrate_binance_futures_data(config: Config):

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -6,7 +6,8 @@ import pytest
 from tests.conftest import EXMS, get_mock_coro, get_patched_exchange
 
 
-def test_hyperliquid_dry_run_liquidation_price(default_conf, mocker):
+@pytest.mark.parametrize("margin_mode", ["isolated", "cross"])
+def test_hyperliquid_dry_run_liquidation_price(default_conf, mocker, margin_mode):
     # test if liq price calculated by dry_run_liquidation_price() is close to ccxt liq price
     # testing different pairs with large/small prices, different leverages, long, short
     markets = {
@@ -281,9 +282,10 @@ def test_hyperliquid_dry_run_liquidation_price(default_conf, mocker):
 
     api_mock = MagicMock()
     default_conf["trading_mode"] = "futures"
-    default_conf["margin_mode"] = "isolated"
+    default_conf["margin_mode"] = margin_mode
     default_conf["stake_currency"] = "USDC"
-    api_mock.load_markets = get_mock_coro(return_value=markets)
+    api_mock.load_markets = get_mock_coro()
+    api_mock.markets = markets
     exchange = get_patched_exchange(
         mocker, default_conf, api_mock, exchange="hyperliquid", mock_markets=False
     )
@@ -298,14 +300,35 @@ def test_hyperliquid_dry_run_liquidation_price(default_conf, mocker):
             position["contracts"],
             position["collateral"],
             position["leverage"],
-            position["collateral"],
-            [],
+            # isolated doesn't use wallet-balance
+            wallet_balance=0.0 if margin_mode == "isolated" else position["collateral"],
+            open_trades=[],
         )
+        # Assume full position size is the wallet balance
         assert pytest.approx(liq_price_returned, rel=0.0001) == liq_price_calculated
+
+        if margin_mode == "cross":
+            # test with larger wallet balance
+            liq_price_calculated_cross = exchange.dry_run_liquidation_price(
+                position["symbol"],
+                position["entryPrice"],
+                is_short,
+                position["contracts"],
+                position["collateral"],
+                position["leverage"],
+                wallet_balance=position["collateral"] * 2,
+                open_trades=[],
+            )
+            # Assume full position size is the wallet balance
+            # This
+            if position["side"] == "long":
+                assert liq_price_returned > liq_price_calculated_cross < position["entryPrice"]
+            else:
+                assert liq_price_returned < liq_price_calculated_cross > position["entryPrice"]
 
 
 def test_hyperliquid_get_funding_fees(default_conf, mocker):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     exchange = get_patched_exchange(mocker, default_conf, exchange="hyperliquid")
     exchange._fetch_and_calculate_funding_fees = MagicMock()
     exchange.get_funding_fees("BTC/USDC:USDC", 1, False, now)

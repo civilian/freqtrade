@@ -2,7 +2,6 @@
 This module contains the configuration class
 """
 
-import ast
 import logging
 import warnings
 from collections.abc import Callable
@@ -13,7 +12,7 @@ from typing import Any
 from freqtrade import constants
 from freqtrade.configuration.deprecated_settings import process_temporary_deprecated_settings
 from freqtrade.configuration.directory_operations import create_datadir, create_userdata_dir
-from freqtrade.configuration.environment_vars import enironment_vars_to_dict
+from freqtrade.configuration.environment_vars import environment_vars_to_dict
 from freqtrade.configuration.load_config import load_file, load_from_files
 from freqtrade.constants import Config
 from freqtrade.enums import (
@@ -81,15 +80,12 @@ class Configuration:
         from freqtrade.commands.arguments import NO_CONF_ALLOWED
 
         if self.args.get("command") not in NO_CONF_ALLOWED:
-            env_data = enironment_vars_to_dict()
+            env_data = environment_vars_to_dict()
             config = deep_merge_dicts(env_data, config)
 
         # Normalize config
         if "internals" not in config:
             config["internals"] = {}
-
-        if "pairlists" not in config:
-            config["pairlists"] = []
 
         # Keep a copy of the original configuration file
         config["original_config"] = deepcopy(config)
@@ -135,7 +131,7 @@ class Configuration:
                 {"verbosity": safe_value_fallback(self.args, "verbosity", default_value=0)}
             )
 
-        if "logfile" in self.args and self.args["logfile"]:
+        if self.args.get("logfile"):
             config.update({"logfile": self.args["logfile"]})
 
         if "print_colorized" in self.args and not self.args["print_colorized"]:
@@ -187,7 +183,7 @@ class Configuration:
             logger.warning("`force_entry_enable` RPC message enabled.")
 
         # Support for sd_notify
-        if "sd_notify" in self.args and self.args["sd_notify"]:
+        if self.args.get("sd_notify"):
             config["internals"].update({"sd_notify": True})
 
     def _process_datadir_options(self, config: Config) -> None:
@@ -196,14 +192,14 @@ class Configuration:
         --user-data, --datadir
         """
         # Check exchange parameter here - otherwise `datadir` might be wrong.
-        if "exchange" in self.args and self.args["exchange"]:
+        if self.args.get("exchange"):
             config["exchange"]["name"] = self.args["exchange"]
             logger.info(f"Using exchange {config['exchange']['name']}")
 
         if "pair_whitelist" not in config["exchange"]:
             config["exchange"]["pair_whitelist"] = []
 
-        if "user_data_dir" in self.args and self.args["user_data_dir"]:
+        if self.args.get("user_data_dir"):
             config.update({"user_data_dir": self.args["user_data_dir"]})
         elif "user_data_dir" not in config:
             # Default to cwd/user_data (legacy option ...)
@@ -216,13 +212,31 @@ class Configuration:
         config.update({"datadir": create_datadir(config, self.args.get("datadir"))})
         logger.info("Using data directory: %s ...", config.get("datadir"))
 
+        self._args_to_config(
+            config, argname="exportdirectory", logstring="Using {} as backtest directory ..."
+        )
+
         if self.args.get("exportfilename"):
             self._args_to_config(
                 config, argname="exportfilename", logstring="Storing backtest results to {} ..."
             )
             config["exportfilename"] = Path(config["exportfilename"])
-        else:
-            config["exportfilename"] = config["user_data_dir"] / "backtest_results"
+            if config.get("exportdirectory") and Path(config["exportdirectory"]).is_dir():
+                logger.warning(
+                    "DEPRECATED: Using `--export-filename` with directories is deprecated, "
+                    "use `--backtest-directory` instead."
+                )
+                if config.get("exportdirectory") is None:
+                    # Fallback - assign export-directory directly.
+                    config["exportdirectory"] = config["exportfilename"]
+        if not config.get("exportdirectory"):
+            config["exportdirectory"] = config["user_data_dir"] / "backtest_results"
+        if not config.get("exportfilename"):
+            config["exportfilename"] = None
+        if config.get("exportfilename"):
+            # ensure exportfilename is a Path object
+            config["exportfilename"] = Path(config["exportfilename"])
+        config["exportdirectory"] = Path(config["exportdirectory"])
 
         if self.args.get("show_sensitive"):
             logger.warning(
@@ -248,10 +262,16 @@ class Configuration:
         self._args_to_config(
             config,
             argname="enable_protections",
-            logstring="Parameter --enable-protections detected, enabling Protections. ...",
+            logstring="Parameter --enable-protections detected, enabling Protections ...",
         )
 
-        if "max_open_trades" in self.args and self.args["max_open_trades"]:
+        self._args_to_config(
+            config,
+            argname="enable_dynamic_pairlist",
+            logstring="Parameter --enable-dynamic-pairlist detected, enabling dynamic pairlist ...",
+        )
+
+        if self.args.get("max_open_trades"):
             config.update({"max_open_trades": self.args["max_open_trades"]})
             logger.info(
                 "Parameter --max-open-trades detected, overriding max_open_trades to: %s ...",
@@ -304,27 +324,18 @@ class Configuration:
                 "recursive_strategy_search",
                 "Recursively searching for a strategy in the strategies folder.",
             ),
-            ("timeframe", "Overriding timeframe with Command line argument"),
             ("export", "Parameter --export detected: {} ..."),
             ("backtest_breakdown", "Parameter --breakdown detected ..."),
             ("backtest_cache", "Parameter --cache={} detected ..."),
             ("disableparamexport", "Parameter --disableparamexport detected: {} ..."),
             ("freqai_backtest_live_models", "Parameter --freqai-backtest-live-models detected ..."),
+            ("backtest_notes", "Parameter --notes detected: {} ..."),
         ]
         self._args_to_config_loop(config, configurations)
-
-        # Edge section:
-        if "stoploss_range" in self.args and self.args["stoploss_range"]:
-            txt_range = ast.literal_eval(self.args["stoploss_range"])
-            config["edge"].update({"stoploss_range_min": txt_range[0]})
-            config["edge"].update({"stoploss_range_max": txt_range[1]})
-            config["edge"].update({"stoploss_range_step": txt_range[2]})
-            logger.info("Parameter --stoplosses detected: %s ...", self.args["stoploss_range"])
 
         # Hyperopt section
 
         configurations = [
-            ("hyperopt", "Using Hyperopt class name: {}"),
             ("hyperopt_path", "Using additional Hyperopt lookup path: {}"),
             ("hyperoptexportfilename", "Using hyperopt file: {}"),
             ("lookahead_analysis_exportfilename", "Saving lookahead analysis results into {} ..."),
@@ -334,6 +345,19 @@ class Configuration:
             ("print_all", "Parameter --print-all detected ..."),
         ]
         self._args_to_config_loop(config, configurations)
+        es_epochs = self.args.get("early_stop", 0)
+        if es_epochs > 0:
+            if es_epochs < 20:
+                logger.warning(
+                    f"Early stop epochs {es_epochs} lower than 20. It will be replaced with 20."
+                )
+                config.update({"early_stop": 20})
+            else:
+                config.update({"early_stop": self.args["early_stop"]})
+            logger.info(
+                f"Parameter --early-stop detected ... Will early stop hyperopt if no improvement "
+                f"after {config.get('early_stop')} epochs ..."
+            )
 
         configurations = [
             ("print_json", "Parameter --print-json detected ..."),
@@ -377,6 +401,7 @@ class Configuration:
             ("timeframes", "timeframes --timeframes: {}"),
             ("days", "Detected --days: {}"),
             ("include_inactive", "Detected --include-inactive-pairs: {}"),
+            ("no_parallel_download", "Detected --no-parallel-download: {}"),
             ("download_trades", "Detected --dl-trades: {}"),
             ("convert_trades", "Detected --convert: {} - Converting Trade data to OHCV {}"),
             ("dataformat_ohlcv", 'Using "{}" to store OHLCV data.'),
@@ -392,6 +417,9 @@ class Configuration:
         self._args_to_config(
             config, argname="trading_mode", logstring="Detected --trading-mode: {}"
         )
+        # TODO: The following 3 lines (candle_type_def, trading_mode, margin_mode) are actually
+        # set in the exchange class. They're however necessary as fallback to avoid
+        # random errors in commands that don't initialize an exchange.
         config["candle_type_def"] = CandleType.get_default(
             config.get("trading_mode", "spot") or "spot"
         )
@@ -493,7 +521,7 @@ class Configuration:
             config["exchange"]["pair_whitelist"] = config["pairs"]
             return
 
-        if "pairs_file" in self.args and self.args["pairs_file"]:
+        if self.args.get("pairs_file"):
             pairs_file = Path(self.args["pairs_file"])
             logger.info(f'Reading pairs file "{pairs_file}".')
             # Download pairs from the pairs file if no config is specified
@@ -505,7 +533,7 @@ class Configuration:
                 config["pairs"].sort()
             return
 
-        if "config" in self.args and self.args["config"]:
+        if self.args.get("config"):
             logger.info("Using pairlist from configuration.")
             config["pairs"] = config.get("exchange", {}).get("pair_whitelist")
         else:

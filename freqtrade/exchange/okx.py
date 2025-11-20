@@ -11,7 +11,7 @@ from freqtrade.exceptions import (
     RetryableOrderError,
     TemporaryError,
 )
-from freqtrade.exchange import Exchange, date_minus_candles
+from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import API_RETRY_COUNT, retrier
 from freqtrade.exchange.exchange_types import CcxtOrder, FtHas
 from freqtrade.misc import safe_value_fallback2
@@ -44,11 +44,12 @@ class Okx(Exchange):
             PriceType.MARK: "index",
             PriceType.INDEX: "mark",
         },
+        "stoploss_blocks_assets": False,
         "ws_enabled": True,
     }
 
     _supported_trading_mode_margin_pairs: list[tuple[TradingMode, MarginMode]] = [
-        # TradingMode.SPOT always supported and not required in this list
+        (TradingMode.SPOT, MarginMode.NONE),
         # (TradingMode.MARGIN, MarginMode.CROSS),
         # (TradingMode.FUTURES, MarginMode.CROSS),
         (TradingMode.FUTURES, MarginMode.ISOLATED),
@@ -64,17 +65,19 @@ class Okx(Exchange):
         """
         Exchange ohlcv candle limit
         OKX has the following behaviour:
-        * 300 candles for up-to-date data
-        * 100 candles for historic data
-        * 100 candles for additional candles (not futures or spot).
+        * spot and futures:
+            * 300 candles for regular candles
+        * mark and premium-index:
+            * 300 candles for up-to-date data
+            * 100 candles for historic data
+        * additional data:
+            * 100 candles for additional candles
         :param timeframe: Timeframe to check
         :param candle_type: Candle-type
         :param since_ms: Starting timestamp
         :return: Candle limit as integer
         """
-        if candle_type in (CandleType.FUTURES, CandleType.SPOT) and (
-            not since_ms or since_ms > (date_minus_candles(timeframe, 300).timestamp() * 1000)
-        ):
+        if candle_type in (CandleType.FUTURES, CandleType.SPOT):
             return 300
 
         return super().ohlcv_candle_limit(timeframe, candle_type, since_ms)
@@ -286,3 +289,23 @@ class Okx(Exchange):
         orders_open = self._api.fetch_open_orders(pair, since=since_ms)
         orders.extend(orders_open)
         return orders
+
+
+class Myokx(Okx):
+    """MyOkx exchange class.
+    Minimal adjustment to disable futures trading for the EU subsidiary of Okx
+    """
+
+    _supported_trading_mode_margin_pairs: list[tuple[TradingMode, MarginMode]] = [
+        (TradingMode.SPOT, MarginMode.NONE),
+    ]
+
+
+class Okxus(Okx):
+    """Okxus exchange class.
+    Minimal adjustment to disable futures trading for the US subsidiary of Okx
+    """
+
+    _supported_trading_mode_margin_pairs: list[tuple[TradingMode, MarginMode]] = [
+        (TradingMode.SPOT, MarginMode.NONE),
+    ]
